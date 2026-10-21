@@ -1,4 +1,7 @@
 {
+  "log": {
+    "loglevel": "warning"
+  },
   "inbounds": [
     {
       "listen": "0.0.0.0",
@@ -23,8 +26,26 @@
   ],
   "outbounds": [
     {
+      "tag": "direct",
       "protocol": "freedom",
       "settings": {}
+    },
+    {
+      "tag": "block-china",
+      "protocol": "blackhole",
+      "settings": {}
     }
-  ]
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "ip": [
+          "geoip:cn"
+        ],
+        "outboundTag": "block-china"
+      }
+    ]
+  }
 }
