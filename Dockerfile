@@ -16,7 +16,7 @@ RUN chmod +x /entrypoint.sh
 ENV PORT=8080
 ENV XRAY_PORT=8081
 ENV VLESS_UUID=36459fd0-0c89-4733-b20e-067ffc341bd2
-ENV WS_PATH=/TG-@Not_Ragnar
+ENV WS_PATH=/
 
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
