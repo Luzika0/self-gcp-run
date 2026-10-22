@@ -2,7 +2,7 @@
 
 Run **Xray VLESS over gRPC** on Google Cloud Run and show a small status page when the service URL is opened in a browser.
 
-> **Safety:** test this feature branch as a separate Cloud Run service first. Do not replace a working production service until you have tested both the browser endpoint and a VLESS client. Never commit your real UUID or an `.env` file.
+> **Safety:** the gRPC fix is on `main`. Build and deploy to a separate Cloud Run test service first; do not replace a working production service until both the browser endpoint and a VLESS client work. Never commit your real UUID or an `.env` file. If a real UUID has been pasted into chat, a public issue, or any other shared place, rotate it and update Secret Manager.
 
 ## ✨ What this version does
 
@@ -61,12 +61,12 @@ gcloud config set project "$PROJECT_ID"
 
 Replace the example project ID with yours. Keep your existing working service and its settings unchanged while testing.
 
-## 2. Clone the feature branch
+## 2. Clone the main branch
 
 For a new local checkout:
 
 ```bash
-git clone --branch feature-vless-grpc https://github.com/Luzika0/self-gcp-run.git
+git clone --branch main https://github.com/Luzika0/self-gcp-run.git
 cd self-gcp-run
 ```
 
@@ -74,8 +74,8 @@ For an existing checkout:
 
 ```bash
 git fetch origin
-git switch feature-vless-grpc
-git pull --ff-only origin feature-vless-grpc
+git switch main
+git pull --ff-only origin main
 git status
 ```
 
