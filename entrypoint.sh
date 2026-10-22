@@ -3,7 +3,7 @@ set -eu
 
 : "${PORT:=8080}"
 : "${XRAY_PORT:=8081}"
-: "${VLESS_UUID:=36459fd0-0c89-4733-b20e-067ffc341bd2}"
+: "${VLESS_UUID:?VLESS_UUID must be supplied at runtime; use Docker .env or Secret Manager}"
 : "${WS_PATH:=/}"
 
 case "$XRAY_PORT" in
