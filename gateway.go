@@ -22,7 +22,7 @@ func main() {
 	uuid := strings.TrimSpace(os.Getenv("VLESS_UUID"))
 	if uuid == "" { log.Fatal("VLESS_UUID must be configured") }
 	path := os.Getenv("WS_PATH")
-	if path == "" { path = "/TG-@Not_Ragnar" }
+	if path == "" { path = "/" }
 	port := os.Getenv("XRAY_PORT")
 	if port == "" { port = "8081" }
 	target, err := url.Parse("http://127.0.0.1:" + port)
