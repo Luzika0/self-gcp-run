@@ -26,6 +26,10 @@ Use this guide to clone the code, configure the container, deploy it, connect Di
 > [!IMPORTANT]
 > **Standard Network Service Tier is not free or unlimited.** Cloud Run compute, NAT gateway usage, NAT data processing, external IP addresses, and internet data transfer can all incur charges. Check current prices for your region before changing a working service.
 
+> [!TIP]
+> **Quick cost reality check:** A low request rate does not automatically mean a low bill. For a continuously running service, even **0.5 requests/second** is about **43,200 requests/day** or **1.296 million requests over 30 days**. That can be below the commonly advertised 2-million-request Cloud Run free-tier allowance, but the allowance is not a promise that the whole service is free: compute, long-lived connections, outbound data transfer, NAT processing, and IP/gateway charges are separate considerations. Check the current pricing and your own billing account's remaining free-tier allowance.
+
+
 ## 📚 Quick navigation
 
 - [Architecture](#-architecture)
@@ -41,6 +45,7 @@ Use this guide to clone the code, configure the container, deploy it, connect Di
 - [9. Choose VPC egress routing](#9-choose-vpc-egress-routing)
 - [10. Configure your VLESS client](#10-configure-your-vless-client)
 - [11. Verify and troubleshoot](#11-verify-and-troubleshoot)
+- [📊 Request rate and realistic cost expectations](#-request-rate-and-realistic-cost-expectations)
 - [💸 Cost optimization](#-cost-optimization)
 - [🔗 Official documentation](#-official-documentation)
 
@@ -396,6 +401,60 @@ NAT IP replacement or routing changes can interrupt active sessions. Verify the 
 Benchmark latency, throughput, and reliability from your actual client locations. Compare Standard and Premium Network Service Tier for your use case; choose based on total cost and performance, not tier name alone.
 
 </details>
+
+## 📊 Request rate and realistic cost expectations
+
+### What does 0.5 requests/second mean?
+
+If Cloud Monitoring really shows an average of **0.5 HTTP requests per second continuously**, the arithmetic is:
+
+| Period | Approximate requests |
+|---|---:|
+| 1 second | 0.5 |
+| 1 minute | 30 |
+| 1 hour | 1,800 |
+| 1 day | 43,200 |
+| 30 days | 1,296,000 |
+
+These are request counts, **not a cost estimate**. The real bill depends on how long requests remain open, CPU and memory configuration, data transferred, region, billing mode, free-tier eligibility/remaining allowance, and networking resources.
+
+### Important for VLESS over WebSocket
+
+- A WebSocket connection normally starts with an HTTP upgrade request and then remains open. One long-lived WebSocket is not the same as a new HTTP request every second.
+- If a chart shows **0.5 requests/second**, first confirm which metric it is measuring. It might be request rate, connection activity, or another metric; do not treat it as a direct measurement of active users or bandwidth.
+- A small number of long-lived connections can transfer many GiB while producing relatively few HTTP requests.
+- Repeated reconnects, health checks, browser refreshes, and client retry loops can increase request counts without representing useful proxy traffic.
+- A successful information page or a low request count does not prove that Cloud NAT is carrying the proxy's outbound data.
+
+### Find what is actually costing money
+
+1. Open [Cloud Billing Reports](https://console.cloud.google.com/billing/reports) and select the correct billing account, project, and date range.
+2. Group or filter costs by **SKU**. Review Cloud Run CPU, Cloud Run memory, Cloud Run requests, network data transfer, Cloud NAT data processing, Cloud NAT gateway usage, and external IP usage separately.
+3. Compare the **usage quantity** as well as the dollar amount. For network SKUs, check the billed GiB; for Cloud Run, check the CPU/memory usage and request quantity where available.
+4. Allow for billing data to update before judging a configuration change. Compare equivalent time windows and similar traffic.
+5. Create a budget alert. A budget alert is a notification, **not** an automatic spending cap or shutdown.
+
+### Which network configuration should I choose?
+
+| Your goal | Configuration to evaluate | Trade-off |
+|---|---|---|
+| Route public outbound traffic through the NAT gateway and use its egress IP | Direct VPC egress with `all-traffic`, plus a correctly configured Cloud NAT | NAT processing, gateway/IP usage, and internet data transfer may all be billed. |
+| Use VPC/NAT only for private destinations | `private-ranges-only` | Public destinations normally bypass this VPC/NAT route; they will not use the NAT egress IP, and other network transfer charges may still apply. |
+| Only expose the Cloud Run HTTPS endpoint; no container-initiated internet traffic needs NAT | Reassess whether Cloud NAT is needed at all | Removing NAT can break outbound connections or fixed-IP requirements. Do not remove it until those dependencies are tested. |
+
+**For this repository's proxy use case:** client traffic that the container forwards to public internet destinations is outbound traffic. If you deliberately need that traffic to use your Standard-tier NAT IP, keep the intended VPC egress route and verify it with an actual outbound-IP test and billing SKU data. Switching to `private-ranges-only` can reduce NAT processing, but it also changes the public egress path and may defeat the fixed-IP/Standard-tier objective. Compare the complete bill before deciding.
+
+### A practical low-cost checklist
+
+- [ ] Keep minimum instances at zero unless you have measured a real need for always-warm instances.
+- [ ] Use the smallest CPU and memory settings that can handle real concurrent sessions without memory pressure or restarts.
+- [ ] Set a sensible maximum-instance limit to reduce unexpected scale-out, while understanding that a low cap can cause connection failures under load.
+- [ ] Check request-based versus instance-based billing and the current Cloud Run pricing rules. Long-lived WebSocket sessions can keep resources occupied; do not assume idle-looking proxy sessions cost nothing.
+- [ ] Avoid unnecessary client reconnect loops and overly frequent health checks.
+- [ ] Verify whether the service truly needs all outbound traffic to use Cloud NAT before paying for NAT processing.
+- [ ] Do not delete or recreate NAT gateways/IPs merely to test costs; configuration changes can interrupt sessions and alter egress IPs.
+- [ ] Track bytes/GiB and network SKUs. For a proxy, transferred data is often more important than HTTP request count.
+- [ ] Use a budget alert and review the billing report regularly.
 
 ## 💸 Cost optimization
 
