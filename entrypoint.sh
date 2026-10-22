@@ -2,12 +2,11 @@
 set -eu
 
 : "${PORT:=8080}"
-: "${XRAY_PORT:=8081}"
-: "${VLESS_UUID:?VLESS_UUID must be supplied at runtime; use Docker .env or Secret Manager}"
-: "${WS_PATH:=/}"
+: "${VLESS_UUID:?VLESS_UUID must be supplied at runtime; use Secret Manager on Cloud Run}"
+: "${GRPC_SERVICE_NAME:=grpc}"
 
-case "$XRAY_PORT" in
-  *[!0-9]*|"") echo "XRAY_PORT must be a number" >&2; exit 1 ;;
+case "$PORT" in
+  *[!0-9]*|"") echo "PORT must be a number" >&2; exit 1 ;;
 esac
 
 case "$VLESS_UUID" in
@@ -15,11 +14,11 @@ case "$VLESS_UUID" in
   *) echo "VLESS_UUID does not look like a UUID" >&2; exit 1 ;;
 esac
 
-export XRAY_PORT VLESS_UUID WS_PATH
-envsubst '${XRAY_PORT} ${VLESS_UUID} ${WS_PATH}' < /etc/xray/config.template.json > /tmp/config.json
-/usr/local/bin/xray run -test -config /tmp/config.json
+case "$GRPC_SERVICE_NAME" in
+  ""|/*|*\?*|*\#*) echo "GRPC_SERVICE_NAME must be a non-empty service name without /, ? or #" >&2; exit 1 ;;
+esac
 
-/usr/local/bin/xray run -config /tmp/config.json &
-XRAY_PID=$!
-trap 'kill "$XRAY_PID" 2>/dev/null || true' TERM INT
-/gateway
+export PORT VLESS_UUID GRPC_SERVICE_NAME
+envsubst '${PORT} ${VLESS_UUID} ${GRPC_SERVICE_NAME}' < /etc/xray/config.template.json > /tmp/config.json
+/usr/local/bin/xray run -test -config /tmp/config.json
+exec /usr/local/bin/xray run -config /tmp/config.json
