@@ -8,8 +8,7 @@ services:
     restart: unless-stopped
     environment:
       VLESS_UUID: ${VLESS_UUID:?Set VLESS_UUID in your shell before running Docker Compose}
-      WS_PATH: ${WS_PATH:?Set WS_PATH in your shell before running Docker Compose}
+      GRPC_SERVICE_NAME: ${GRPC_SERVICE_NAME:-grpc}
       PORT: "8080"
-      XRAY_PORT: "8081"
     ports:
       - "127.0.0.1:8080:8080"
