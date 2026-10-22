@@ -283,3 +283,100 @@ Check Cloud Run compute, Cloud NAT gateway and data processing, external IP addr
   <strong>☁️ Configure carefully · Verify egress · Monitor your bill</strong><br/>
   <sub>Documentation for learning and planning. Review current Google Cloud documentation and prices before changing production networking.</sub>
 </p>
+
+
+## 🖥️ Cloud Run proxy service and browser information page
+
+This repository can run an Xray **VLESS over WebSocket (WS)** inbound behind a small Go HTTP gateway. The gateway lets ordinary browser requests display a friendly information page while WebSocket upgrade requests are forwarded to Xray.
+
+### Request flow
+
+```text
+Browser opens /
+      |
+      v
+Go gateway serves the service information page
+
+VLESS client connects to configured WebSocket path
+      |
+      v
+Go gateway forwards the WebSocket request to Xray
+      |
+      v
+Xray validates the VLESS UUID and handles proxy traffic
+```
+
+The browser page and the VLESS connection are separate functions. A successful browser page load only shows that the HTTP endpoint responded; it does not prove that a VLESS client can connect or that outbound internet access is working.
+
+### Browser page and UUID verification
+
+The gateway supports a browser form that checks the submitted UUID on the server before returning the information page. Keep these points in mind:
+
+- The UUID is a credential. Do not publish a live UUID in README files, screenshots, public issue reports, or client import links.
+- Configure the production UUID through Cloud Run environment configuration or Secret Manager rather than relying on a sample/default value in source code.
+- Use HTTPS when entering credentials. Do not enter a UUID into an untrusted page.
+- The current simple verification form is not a full identity system. If the information page is sensitive, add rate limiting and short-lived authenticated sessions before exposing it publicly.
+- Browser UUID verification does **not** authenticate a VLESS connection by itself; Xray validates the UUID used by the VLESS client separately.
+
+### VLESS + WebSocket + TLS client settings
+
+For a Cloud Run HTTPS endpoint, the typical client values are:
+
+| Field | Value |
+|---|---|
+| Protocol | VLESS |
+| Server / address | The hostname of the actual Cloud Run URL or configured custom domain |
+| Port | `443` |
+| Transport | WebSocket (`ws`) |
+| TLS / security | TLS |
+| SNI | The hostname used by the client |
+| WebSocket Host header | Usually the same hostname |
+| WebSocket path | Must exactly match `WS_PATH` and Xray's `wsSettings.path` |
+| UUID | The value configured for `VLESS_UUID` |
+
+**Do not copy a sample UUID from this documentation into production.** The actual UUID must match the value configured in Cloud Run and Xray. If a UUID was ever committed publicly, rotate it and update authorized clients.
+
+Cloud Run's `run.app` URL provides HTTPS/TLS at the platform edge. Do not assume that a different hostname, custom domain, or path works until you test it with the deployed revision. Keep the WebSocket path identical on both the client and Xray.
+
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `PORT` | HTTP port that Cloud Run routes requests to; normally `8080` |
+| `XRAY_PORT` | Internal Xray listener port; the gateway and Xray must agree |
+| `VLESS_UUID` | VLESS client credential configured in Xray |
+| `WS_PATH` | WebSocket path; must match the client configuration |
+
+Set or update a service variable with Cloud Run, for example:
+
+```bash
+gcloud run services update YOUR_SERVICE \\
+  --region=YOUR_REGION \\
+  --update-env-vars=WS_PATH=/YOUR_WS_PATH
+```
+
+For a real UUID, prefer Secret Manager or another controlled secret-management method. Avoid putting secrets in shell history, source control, logs, or command examples shared with others.
+
+### Deploying source changes
+
+If your repository is connected to Cloud Build or another CI/CD pipeline, pushing to the configured branch may trigger a new image build and deployment. Check the build result and the active Cloud Run revision before testing. If no automatic trigger is configured, build and deploy using your existing pipeline; do not replace a working service URL or alter network settings unless needed.
+
+After deployment, test both paths:
+
+1. Open the service root URL in a browser and confirm the information page responds.
+2. Connect using an authorized VLESS client with the correct hostname, port, UUID, TLS, and WebSocket path.
+3. Check Cloud Run logs for startup errors, HTTP errors, and failed proxy requests.
+
+### 💸 Cost notes for the proxy and information page
+
+The HTML information page and a UUID comparison use very little compute during occasional visits. They should not materially change the bill on their own. The larger cost factors can be:
+
+- Cloud Run CPU and memory while requests are active, including long-lived WebSocket requests.
+- Repeated client reconnects, including a VPN app reconnecting in the background.
+- Outbound internet data transfer and destination-dependent transfer pricing.
+- Cloud NAT gateway usage, NAT data processing, and external IP charges when traffic uses the VPC/NAT path.
+
+Cloud Run's minimum instance setting of zero does not terminate an active request. WebSocket connections are subject to the configured request timeout; reconnecting clients can create new requests repeatedly. If you do not need the proxy overnight, disconnect clients or disable automatic reconnection rather than increasing the timeout solely to reduce cost.
+
+To investigate a bill, compare Cloud Run compute, Cloud NAT, and network data-transfer line items for the same time range. A count of HTTP `101` responses is a count of WebSocket upgrades, not a count of unique users, total connection duration, or an exact cost calculation.
+
