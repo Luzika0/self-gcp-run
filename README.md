@@ -21,7 +21,7 @@ This repository runs an **Xray VLESS + WebSocket** inbound behind a small Go HTT
 Use this guide to clone the code, configure the container, deploy it, connect Direct VPC egress, optionally route outbound traffic through Cloud NAT, and review costs.
 
 > [!CAUTION]
-> **Protect your UUID/secret.** The Docker image does not contain your UUID. Supply `VLESS_UUID` at runtime: use a private, ignored `.env` file for local Docker and Secret Manager for Cloud Run. Never commit real credentials to Git. If a real UUID was exposed, rotate it and update your clients.
+> **Protect your UUID/secret.** The Docker image does not contain your UUID. Supply `VLESS_UUID` at runtime: pass `VLESS_UUID` as a runtime environment variable when starting Docker and use Secret Manager for Cloud Run. Never commit real credentials to Git. If a real UUID was exposed, rotate it and update your clients.
 
 > [!IMPORTANT]
 > **Standard Network Service Tier is not free or unlimited.** Cloud Run compute, NAT gateway usage, NAT data processing, external IP addresses, and internet data transfer can all incur charges. Check current prices for your region before changing a working service.
@@ -258,61 +258,77 @@ The WebSocket path must be identical in Cloud Run and the VLESS client. If you c
 
 ## 🐳 Run with Docker Compose
 
-You can run the gateway + Xray container on a Docker host (Linux, Windows with Docker Desktop, or a VPS). Compose publishes the gateway on **127.0.0.1:8080** by default; Xray stays internal to the container. For a remote server, place a TLS reverse proxy in front of the container. Do not expose the internal Xray port.
+All settings are passed to the running container as environment variables. **You do not need a `.env` file.** The Docker image contains no real UUID or secret. Docker Compose publishes the gateway only on `127.0.0.1:8080`; Xray stays internal to the container.
 
-### 1. Prepare your secret
+### 1. Set variables in your terminal
 
-Install Docker Engine and the Docker Compose plugin, then run from the repository root:
+**Git Bash / Linux / macOS:**
 
 ```bash
-cp .env.example .env
+export VLESS_UUID="PASTE_YOUR_EXISTING_UUID_SECRET_HERE"
+export WS_PATH="/replace-with-a-long-random-path"
 ```
 
-Edit `.env` and enter your **existing VLESS UUID secret** in `VLESS_UUID`. Do not paste the secret into this README, the Dockerfile, or Git. Choose a WebSocket path and configure the client with exactly the same path.
+**Windows PowerShell:**
 
-```dotenv
-VLESS_UUID=PASTE_YOUR_EXISTING_UUID_HERE
-WS_PATH=/replace-with-a-long-random-path
-PORT=8080
-XRAY_PORT=8081
+```powershell
+$env:VLESS_UUID = "PASTE_YOUR_EXISTING_UUID_SECRET_HERE"
+$env:WS_PATH = "/replace-with-a-long-random-path"
 ```
 
-The `.env` file is ignored by Git, and `.dockerignore` excludes it from the Docker build context. Keep the file private. The example value is a placeholder and must be replaced before starting the container.
+Use your existing UUID secret locally; do not paste it into GitHub or this README. Keep the WebSocket path identical in your VLESS client.
 
-### 2. Build and start
+### 2. Build and start with Docker Compose
 
 ```bash
 docker compose up -d --build
-
 docker compose ps
 docker compose logs --tail=100
 ```
 
-Open `http://127.0.0.1:8080` on the Docker host to verify the information page. The port is bound to loopback for safety. If a reverse proxy runs on the same host, configure it to proxy WebSocket upgrades to `http://127.0.0.1:8080` and terminate TLS there. Set the VLESS client to the public hostname, TLS enabled, WebSocket transport, and the same `WS_PATH`.
+Compose passes `VLESS_UUID` and `WS_PATH` from your shell into the container at startup. If either required variable is missing, Compose stops with a clear error instead of starting with a sample secret.
+
+Open `http://127.0.0.1:8080` on the Docker host to verify the information page. For a remote server, configure a TLS reverse proxy in front of this local-only port and enable WebSocket forwarding. Configure the VLESS client with the public hostname, TLS enabled, WebSocket transport, your UUID, and the same `WS_PATH`.
 
 ### 3. Stop or rebuild
 
 ```bash
 docker compose down
-# Rebuild after code changes
 docker compose up -d --build
 ```
 
-### 4. Alternative: use Docker commands directly
+### 4. Run directly with `docker run` (no Compose)
+
+**Git Bash / Linux / macOS:**
 
 ```bash
 docker build -t self-gcp-run:local .
-docker run -d --name self-gcp-run \\
-  --restart unless-stopped \\
-  -p 127.0.0.1:8080:8080 \\
-  --env-file .env \\
+docker run -d --name self-gcp-run \
+  --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -e VLESS_UUID="$VLESS_UUID" \
+  -e WS_PATH="$WS_PATH" \
+  -e PORT=8080 \
+  -e XRAY_PORT=8081 \
   self-gcp-run:local
 ```
 
-View logs with `docker logs --tail=100 self-gcp-run`; stop/remove with `docker rm -f self-gcp-run`. Docker Compose is easier for routine use.
+**Windows PowerShell:**
+
+```powershell
+docker build -t self-gcp-run:local .
+docker run -d --name self-gcp-run --restart unless-stopped `
+  -p 127.0.0.1:8080:8080 `
+  -e VLESS_UUID="$env:VLESS_UUID" `
+  -e WS_PATH="$env:WS_PATH" `
+  -e PORT=8080 -e XRAY_PORT=8081 `
+  self-gcp-run:local
+```
+
+View logs with `docker logs --tail=100 self-gcp-run`; stop/remove with `docker rm -f self-gcp-run`. Environment variables are supplied when the container starts, not baked into the image. Users with Docker host access may inspect container environment variables, so protect access to the Docker host.
 
 > [!WARNING]
-> This setup exposes an HTTP port only on the host's loopback interface, suitable for local testing or a same-host reverse proxy. Do not bind the port publicly without TLS, firewall rules, and a deliberate security review. The container requires `VLESS_UUID` at runtime; it will fail fast if the secret is missing.
+> This configuration binds HTTP to host loopback for local testing or a same-host reverse proxy. Do not expose the port publicly without TLS and firewall rules. For production, use your hosting platform's secret manager when available. Environment variables avoid committing secrets to source control but are not a substitute for host access controls.
 
 ## 7. Build the container image
 
