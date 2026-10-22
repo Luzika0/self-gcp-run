@@ -6,9 +6,9 @@ services:
     image: self-gcp-run:local
     container_name: self-gcp-run
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      VLESS_UUID: ${VLESS_UUID:?Set VLESS_UUID in your shell before running Docker Compose}
+      WS_PATH: ${WS_PATH:?Set WS_PATH in your shell before running Docker Compose}
       PORT: "8080"
       XRAY_PORT: "8081"
     ports:
