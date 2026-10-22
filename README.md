@@ -45,6 +45,7 @@ Use this guide to clone the code, configure the container, deploy it, connect Di
 - [9. Choose VPC egress routing](#9-choose-vpc-egress-routing)
 - [10. Configure your VLESS client](#10-configure-your-vless-client)
 - [11. Verify and troubleshoot](#11-verify-and-troubleshoot)
+- [⚡ Xray and Cloud Run performance tuning](#-xray-and-cloud-run-performance-tuning)
 - [📊 Request rate and realistic cost expectations](#-request-rate-and-realistic-cost-expectations)
 - [💸 Cost optimization](#-cost-optimization)
 - [🔗 Official documentation](#-official-documentation)
@@ -401,6 +402,58 @@ NAT IP replacement or routing changes can interrupt active sessions. Verify the 
 Benchmark latency, throughput, and reliability from your actual client locations. Compare Standard and Premium Network Service Tier for your use case; choose based on total cost and performance, not tier name alone.
 
 </details>
+
+## ⚡ Xray and Cloud Run performance tuning
+
+This repository currently uses **VLESS + WebSocket**: Cloud Run terminates HTTPS, the Go gateway forwards WebSocket upgrades to Xray on localhost, and Xray uses the `freedom` outbound. This is a lightweight design; avoid adding another proxy, TLS layer, or sidecar unless measurements show a real need.
+
+### Recommended baseline for balanced cost and throughput
+
+| Area | Recommended baseline | Why / trade-off |
+|---|---|---|
+| Transport | Keep the working VLESS + WebSocket path | Changing to another transport requires client and server changes and may break existing clients. |
+| Cloud Run network | Keep Direct VPC egress and `all-traffic` when the NAT egress IP is required | Preserves the intended Cloud NAT path and Standard Tier configuration. |
+| Execution environment | Test **second generation** for sustained proxy traffic with Direct VPC egress | Google documents better networking performance, especially with packet loss. It requires at least 512 MiB memory and can have slower cold starts. |
+| Memory | Start from the currently working 512 MiB setting; inspect peak usage and restarts before changing it | Too little memory can cause restarts or instability; extra memory can increase cost under some billing configurations. |
+| CPU / billing | Keep current CPU and billing mode until you benchmark sustained WebSocket traffic | Instance-based and request-based billing behave differently for long-lived sessions. Compare the actual bill before switching. |
+| Scaling | Keep minimum instances at zero if cold starts are acceptable; set a tested maximum | A low maximum limits scale-out costs but can cap concurrent sessions and throughput. |
+| Xray outbound | Keep the existing `freedom` outbound unless you intentionally need a different route | Extra routing, DNS, or proxy layers can add latency and failure points. |
+| Logging | Do not enable debug logging for normal operation | Debug logs add noise and can increase log ingestion costs. Enable temporarily when troubleshooting, then revert. |
+| MTU | Keep the VPC network at Google's recommended default MTU of 1460 for Cloud Run | Do not try random MTU changes as a performance tweak. |
+
+Official references: [Cloud Run networking best practices](https://cloud.google.com/run/docs/configuring/networking-best-practices), [execution environments](https://cloud.google.com/run/docs/configuring/execution-environments), and [Direct VPC egress](https://cloud.google.com/run/docs/configuring/vpc-direct-vpc).
+
+### Test second-generation execution without changing the NAT route
+
+This is an **optional performance experiment**, not a required change. Run it only when you are ready to create a new Cloud Run revision and test it. It does not change the repository or run automatically during a build:
+
+```bash
+gcloud run services update "$SERVICE" \
+  --region="$REGION" \
+  --execution-environment=gen2
+```
+
+Keep the current network, subnet, `--vpc-egress=all-traffic`, Cloud NAT, memory, CPU, concurrency, timeout, and scaling settings unchanged during the first comparison. Check the new revision and confirm the NAT egress IP before deciding whether to keep it. Roll back by restoring the previous revision if the result is worse.
+
+Second generation requires at least 512 MiB memory. It can improve sustained networking performance but does not guarantee a speed increase for every client or destination, and it does not make network transfer or Cloud NAT free.
+
+### Benchmark correctly before changing Xray settings
+
+1. Record a baseline from the same client and location: download speed, upload speed, latency, reconnect success, and the Cloud Run revision.
+2. Test at least three conditions: idle/light browsing, one sustained download, and several simultaneous connections. Use lawful test destinations you control or are authorized to use.
+3. In Cloud Monitoring, compare instance CPU and memory, instance count, request count, and restarts. In Cloud Billing, compare Cloud NAT data processing and network data-transfer GiB separately.
+4. Change **one setting at a time** and repeat the same tests. Keep the change only if performance or total cost improves without breaking connections.
+5. For throughput, remember Cloud Run documents up to 1 Gbps per individual instance for Direct VPC egress; this is a platform ceiling, not a speed guarantee. Destination capacity, client network, packet loss, and NAT/network routing can all be bottlenecks.
+
+### Avoid these common “optimization” mistakes
+
+- Do not switch to `private-ranges-only` if public proxy traffic must exit through your Cloud NAT IP.
+- Do not raise the maximum instance count just to chase speed without checking NAT capacity, cost, and concurrency.
+- Do not reduce memory based only on average usage; use peak usage and restart history.
+- Do not assume a low HTTP request rate means low bandwidth: one WebSocket can carry a long, high-volume session.
+- Do not add compression to the proxy by default; it can consume CPU and usually does not help already-compressed HTTPS traffic carried through the tunnel.
+- Do not enable WebSocket heartbeat or change Xray transport settings without confirming client compatibility and measuring whether idle connections actually need it.
+- Do not replace the working WebSocket transport with XHTTP, gRPC, or another protocol as a “drop-in” tuning change; it requires compatibility checks and client-side changes.
 
 ## 📊 Request rate and realistic cost expectations
 
