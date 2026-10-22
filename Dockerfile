@@ -7,7 +7,9 @@ COPY config.template.json /etc/xray/config.template.json
 COPY envoy.yaml /etc/envoy/envoy.yaml
 COPY entrypoint.sh /entrypoint.sh
 
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh \
+    && /usr/local/bin/envoy --mode validate -c /etc/envoy/envoy.yaml
 
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
+CMD []
