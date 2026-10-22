@@ -21,7 +21,7 @@ This repository runs an **Xray VLESS + WebSocket** inbound behind a small Go HTT
 Use this guide to clone the code, configure the container, deploy it, connect Direct VPC egress, optionally route outbound traffic through Cloud NAT, and review costs.
 
 > [!CAUTION]
-> **Protect your UUID.** The Dockerfile and startup script include a sample fallback UUID. Always override it with a unique UUID before deployment. Do not commit real credentials to Git, put them in screenshots, or share them in public issues. If a real UUID was exposed, rotate it and update your clients.
+> **Protect your UUID/secret.** The Docker image does not contain your UUID. Supply `VLESS_UUID` at runtime: use a private, ignored `.env` file for local Docker and Secret Manager for Cloud Run. Never commit real credentials to Git. If a real UUID was exposed, rotate it and update your clients.
 
 > [!IMPORTANT]
 > **Standard Network Service Tier is not free or unlimited.** Cloud Run compute, NAT gateway usage, NAT data processing, external IP addresses, and internet data transfer can all incur charges. Check current prices for your region before changing a working service.
@@ -40,6 +40,7 @@ Use this guide to clone the code, configure the container, deploy it, connect Di
 - [4. Create or configure VPC and subnet](#4-create-or-configure-vpc-and-subnet)
 - [5. Configure Cloud Router and Cloud NAT](#5-configure-cloud-router-and-cloud-nat)
 - [6. Configure UUID and WebSocket path](#6-configure-uuid-and-websocket-path)
+- [🐳 Run with Docker Compose](#-run-with-docker-compose)
 - [7. Build the container image](#7-build-the-container-image)
 - [8. Deploy to Cloud Run](#8-deploy-to-cloud-run)
 - [9. Choose VPC egress routing](#9-choose-vpc-egress-routing)
@@ -253,6 +254,65 @@ export WS_PATH="/replace-with-a-long-random-path"
 Keep the UUID private. For production, prefer Secret Manager over a plain environment variable. If using Secret Manager, grant the Cloud Run service identity access and map the secret to `VLESS_UUID`; do not put a real UUID into source control or a shared command history.
 
 The WebSocket path must be identical in Cloud Run and the VLESS client. If you change it, update every authorized client.
+
+
+## 🐳 Run with Docker Compose
+
+You can run the gateway + Xray container on a Docker host (Linux, Windows with Docker Desktop, or a VPS). Compose publishes the gateway on **127.0.0.1:8080** by default; Xray stays internal to the container. For a remote server, place a TLS reverse proxy in front of the container. Do not expose the internal Xray port.
+
+### 1. Prepare your secret
+
+Install Docker Engine and the Docker Compose plugin, then run from the repository root:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and enter your **existing VLESS UUID secret** in `VLESS_UUID`. Do not paste the secret into this README, the Dockerfile, or Git. Choose a WebSocket path and configure the client with exactly the same path.
+
+```dotenv
+VLESS_UUID=PASTE_YOUR_EXISTING_UUID_HERE
+WS_PATH=/replace-with-a-long-random-path
+PORT=8080
+XRAY_PORT=8081
+```
+
+The `.env` file is ignored by Git, and `.dockerignore` excludes it from the Docker build context. Keep the file private. The example value is a placeholder and must be replaced before starting the container.
+
+### 2. Build and start
+
+```bash
+docker compose up -d --build
+
+docker compose ps
+docker compose logs --tail=100
+```
+
+Open `http://127.0.0.1:8080` on the Docker host to verify the information page. The port is bound to loopback for safety. If a reverse proxy runs on the same host, configure it to proxy WebSocket upgrades to `http://127.0.0.1:8080` and terminate TLS there. Set the VLESS client to the public hostname, TLS enabled, WebSocket transport, and the same `WS_PATH`.
+
+### 3. Stop or rebuild
+
+```bash
+docker compose down
+# Rebuild after code changes
+docker compose up -d --build
+```
+
+### 4. Alternative: use Docker commands directly
+
+```bash
+docker build -t self-gcp-run:local .
+docker run -d --name self-gcp-run \\
+  --restart unless-stopped \\
+  -p 127.0.0.1:8080:8080 \\
+  --env-file .env \\
+  self-gcp-run:local
+```
+
+View logs with `docker logs --tail=100 self-gcp-run`; stop/remove with `docker rm -f self-gcp-run`. Docker Compose is easier for routine use.
+
+> [!WARNING]
+> This setup exposes an HTTP port only on the host's loopback interface, suitable for local testing or a same-host reverse proxy. Do not bind the port publicly without TLS, firewall rules, and a deliberate security review. The container requires `VLESS_UUID` at runtime; it will fail fast if the secret is missing.
 
 ## 7. Build the container image
 
