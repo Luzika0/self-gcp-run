@@ -1,147 +1,96 @@
 # ☁️ Self GCP Run
 
 <p align="center">
-  <strong>Deploy a VLESS over WebSocket proxy on Google Cloud Run</strong><br>
-  Practical setup, networking, Cloud NAT, Standard Tier, and cost-control guide.
+  <strong>Run Cloud Run with controlled outbound networking and cost-aware egress</strong><br/>
+  A practical guide to Direct VPC egress, Cloud Router, Public Cloud NAT, and Standard Network Service Tier.
 </p>
 
 <p align="center">
-  <a href="https://cloud.google.com/run/docs/configuring/vpc-direct-vpc"><img alt="Cloud Run" src="https://img.shields.io/badge/Google%20Cloud-Cloud%20Run-4285F4?logo=googlecloud&logoColor=white"></a>
-  <a href="https://cloud.google.com/nat/docs/overview"><img alt="Cloud NAT" src="https://img.shields.io/badge/Networking-Cloud%20NAT-34A853?logo=googlecloud&logoColor=white"></a>
-  <a href="https://cloud.google.com/vpc/network-pricing"><img alt="Network Tier" src="https://img.shields.io/badge/Network%20Tier-Standard-FBBC04?logo=googlecloud&logoColor=black"></a>
-  <img alt="Guide" src="https://img.shields.io/badge/Guide-End--to--end-6C63FF">
+  <a href="https://cloud.google.com/run/docs/configuring/vpc-direct-vpc"><img alt="Cloud Run" src="https://img.shields.io/badge/Google%20Cloud-Cloud%20Run-4285F4?logo=googlecloud&logoColor=white"/></a>
+  <a href="https://cloud.google.com/nat/docs/overview"><img alt="Cloud NAT" src="https://img.shields.io/badge/Networking-Cloud%20NAT-34A853?logo=googlecloud&logoColor=white"/></a>
+  <a href="https://cloud.google.com/vpc/network-pricing"><img alt="Network Tier" src="https://img.shields.io/badge/Network%20Tier-Standard-FBBC04?logo=googlecloud&logoColor=black"/></a>
+  <img alt="Docs" src="https://img.shields.io/badge/Docs-Setup%20Guide-6C63FF"/>
 </p>
 
 ---
 
-## 👋 Welcome
+## ✨ What this guide helps you do
 
-This repository runs an **Xray VLESS + WebSocket** inbound behind a small Go HTTP gateway on Cloud Run. The gateway serves a simple information page for ordinary browser requests and forwards WebSocket upgrades to Xray.
-
-Use this guide to clone the code, configure the container, deploy it, connect Direct VPC egress, optionally route outbound traffic through Cloud NAT, and review costs.
-
-> [!CAUTION]
-> **Protect your UUID.** The Dockerfile and startup script include a sample fallback UUID. Always override it with a unique UUID before deployment. Do not commit real credentials to Git, put them in screenshots, or share them in public issues. If a real UUID was exposed, rotate it and update your clients.
+| Goal | What you configure |
+|---|---|
+| 💸 Investigate lower network costs | Compare Standard Tier networking with Premium Tier for your traffic and region |
+| 🌐 Route outbound traffic | Cloud Run **Direct VPC egress** with `all-traffic` |
+| 🪪 Use a known outbound IP | Public Cloud NAT external IP(s), useful for upstream IP allowlists |
+| 🔎 Troubleshoot networking | Commands to inspect VPC, Cloud Router, NAT, and Cloud Run settings |
 
 > [!IMPORTANT]
-> **Standard Network Service Tier is not free or unlimited.** Cloud Run compute, NAT gateway usage, NAT data processing, external IP addresses, and internet data transfer can all incur charges. Check current prices for your region before changing a working service.
+> **Standard Tier does not mean free or unlimited bandwidth.** Cloud Run compute, Cloud NAT gateway usage, NAT data processing, external IP addresses, and internet data transfer may all cost money. Compare the current prices for your region before changing a working setup.
 
-## 📚 Quick navigation
+## 📚 Contents
 
 - [Architecture](#-architecture)
-- [Before you begin](#-before-you-begin)
-- [1. Clone the repository](#1-clone-the-repository)
-- [2. Set project variables](#2-set-project-variables)
-- [3. Inspect existing networking](#3-inspect-existing-networking)
-- [4. Create or configure VPC and subnet](#4-create-or-configure-vpc-and-subnet)
-- [5. Configure Cloud Router and Cloud NAT](#5-configure-cloud-router-and-cloud-nat)
-- [6. Configure UUID and WebSocket path](#6-configure-uuid-and-websocket-path)
-- [7. Build the container image](#7-build-the-container-image)
-- [8. Deploy to Cloud Run](#8-deploy-to-cloud-run)
-- [9. Choose VPC egress routing](#9-choose-vpc-egress-routing)
-- [10. Configure your VLESS client](#10-configure-your-vless-client)
-- [11. Verify and troubleshoot](#11-verify-and-troubleshoot)
-- [💸 Cost optimization](#-cost-optimization)
+- [Prerequisites and variables](#-prerequisites-and-variables)
+- [Step 1 — Inspect your current setup](#-step-1--inspect-your-current-setup)
+- [Step 2 — Create a VPC and subnet if needed](#-step-2--create-a-vpc-and-subnet-if-needed)
+- [Step 3 — Configure Cloud Router and Standard Tier NAT](#-step-3--configure-cloud-router-and-standard-tier-nat)
+- [Step 4 — Connect Cloud Run to the VPC](#-step-4--connect-cloud-run-to-the-vpc)
+- [Step 5 — Verify the outbound IP](#-step-5--verify-the-outbound-ip)
+- [💸 Cost optimization checklist](#-cost-optimization-checklist)
+- [🧰 Troubleshooting](#-troubleshooting)
 - [🔗 Official documentation](#-official-documentation)
 
 ## 🗺️ Architecture
 
-### With all outbound traffic routed through Cloud NAT
-
 ```text
-VLESS client
-    │ HTTPS / WebSocket (TLS)
-    ▼
-Cloud Run public HTTPS endpoint
-    │
-    ▼
-Go gateway ───────► Xray (VLESS)
-                         │ outbound connection
-                         ▼
-                  Direct VPC egress
-                         │
-                         ▼
-                    VPC subnet
-                         │
-                         ▼
-                Cloud Router + NAT
-                         │
-                         ▼
-                  Public internet
+                 INBOUND
+Client ──────── HTTPS ────────> Cloud Run service
+                                      |
+                                      | OUTBOUND: all-traffic
+                                      v
+                                Direct VPC egress
+                                      |
+                                      v
+                                   VPC subnet
+                                      |
+                                      v
+                              Cloud Router + NAT
+                              Standard Tier IP(s)
+                                      |
+                                      v
+                              Internet / upstream
 ```
 
-Cloud NAT is for outbound connections from resources using the VPC. It does **not** provide the inbound Cloud Run URL or a public inbound IP for your service. The Cloud Run HTTPS endpoint and the NAT egress IP serve different purposes.
+**Key distinction:** Cloud NAT provides outbound internet connectivity for connections initiated from the VPC and handles their return traffic. It does **not** change your inbound Cloud Run `run.app` URL or give Cloud Run a public inbound IP address.
 
-## ✅ Before you begin
+## ✅ Prerequisites and variables
 
-You need:
+Before you start, you need:
 
 - A Google Cloud project with billing enabled.
-- Google Cloud CLI (`gcloud`) in Cloud Shell or installed locally.
-- Permission to manage Cloud Run, Cloud Build, Artifact Registry, VPC, Cloud Router, and Cloud NAT.
-- A region and an available, non-overlapping subnet range.
-- A fresh VLESS UUID and a WebSocket path.
-- An understanding of which outbound route you need: a fixed NAT IP, or lower NAT usage without a fixed NAT egress IP.
+- The Google Cloud CLI (`gcloud`) installed, authenticated, and configured.
+- Permission to configure Cloud Run, VPC networks/subnets, Cloud Router, and Cloud NAT.
+- A region for your Cloud Run service and networking resources.
+- A plan for a non-overlapping subnet CIDR range.
 
-**Safety first:** Inspect resources before creating them. Reuse an existing VPC, subnet, router, and NAT gateway whenever possible; duplicate resources can add cost and make troubleshooting harder.
-
-## 1. Clone the repository
-
-Run in Cloud Shell or a terminal with Git installed:
+Set your values in Cloud Shell. Change every placeholder to match your project.
 
 ```bash
-git clone https://github.com/Luzika0/self-gcp-run.git
-cd self-gcp-run
-
-# Review the files before building
-ls -la
-```
-
-Main files:
-
-| File | Purpose |
-|---|---|
-| `Dockerfile` | Builds the gateway and Xray container |
-| `gateway.go` | Serves the browser page and forwards WebSocket traffic |
-| `config.template.json` | Xray inbound/outbound configuration template |
-| `entrypoint.sh` | Validates environment variables and starts Xray and the gateway |
-
-Cloud Run routes HTTP traffic to the gateway on port `8080`. Xray listens internally on `XRAY_PORT` (default `8081`). The client WebSocket path must match `WS_PATH` exactly.
-
-## 2. Set project variables
-
-The values below match the example deployment. Change them if your project or resource names differ.
-
-```bash
-export PROJECT_ID="project-a733d9b6-3591-4ac1-b42"
-export REGION="asia-southeast1"
-export SERVICE="self-gcp-run"
-
-export NETWORK="cloud-run-sg"
-export SUBNET="cloudrun-standard-vpc-sg"
-export ROUTER="nat-sg"
-export NAT="cloudrun-standard-vpc-sg"
-
-export AR_REPO="self-gcp-run"
-export IMAGE_NAME="self-gcp-run"
+PROJECT_ID="YOUR_PROJECT_ID"
+REGION="asia-southeast1"
+SERVICE="google-cloud-run-proxy"
+NETWORK="YOUR_VPC_NETWORK"
+SUBNET="YOUR_SUBNET"
+ROUTER="YOUR_CLOUD_ROUTER"
+NAT="YOUR_CLOUD_NAT"
 
 gcloud config set project "$PROJECT_ID"
-gcloud services enable \
-  run.googleapis.com \
-  cloudbuild.googleapis.com \
-  artifactregistry.googleapis.com \
-  compute.googleapis.com
+gcloud services enable compute.googleapis.com run.googleapis.com
 ```
 
-If using Cloud Shell, you may already be authenticated. Check the selected project before running commands:
+> [!TIP]
+> Run the inspection commands first. Reuse existing resources when possible; do not create a second VPC, subnet, router, or NAT gateway just because the examples below show how.
 
-```bash
-gcloud config get-value project
-```
-
-## 3. Inspect existing networking
-
-Run these commands before creating anything:
+## 🔍 Step 1 — Inspect your current setup
 
 ```bash
 gcloud run services describe "$SERVICE" --region="$REGION"
@@ -150,42 +99,41 @@ gcloud compute networks list
 gcloud compute networks subnets list --regions="$REGION"
 gcloud compute routers list --regions="$REGION"
 
+# Inspect NAT configurations on routers in this region
+gcloud compute routers list --regions="$REGION"
+```
+
+For a known router, list its NAT gateways:
+
+```bash
 gcloud compute routers nats list \
   --router="$ROUTER" \
   --region="$REGION"
 ```
 
-If the NAT gateway exists, inspect it:
+Direct VPC egress needs sufficient free subnet IP addresses for Cloud Run instances and deployment overlap. A subnet with a range of **/26 or larger** is a sensible starting point for this setup; choose a range that does not overlap with connected networks and check current Google Cloud requirements.
+
+## 🧱 Step 2 — Create a VPC and subnet if needed
+
+**Skip this section if your VPC and subnet already exist.** The example uses a custom-mode VPC and a sample private IPv4 range. Confirm the range is unused in your environment before running it.
 
 ```bash
-gcloud compute routers nats describe "$NAT" \
-  --router="$ROUTER" \
-  --region="$REGION"
-```
-
-If a command says a resource is missing, verify the project, name, and region before creating it. Direct VPC egress requires sufficient free subnet IP addresses for running instances and deployment overlap. Use a non-overlapping subnet and follow current Google Cloud subnet sizing guidance.
-
-## 4. Create or configure VPC and subnet
-
-**Skip this section if your VPC and subnet already exist.** Check your address plan before using the sample range.
-
-```bash
-# Create a custom-mode VPC only if it does not exist
 gcloud compute networks create "$NETWORK" \
   --subnet-mode=custom
 
-# Create a subnet only if it does not exist
 gcloud compute networks subnets create "$SUBNET" \
   --network="$NETWORK" \
   --region="$REGION" \
   --range="10.10.0.0/26"
 ```
 
-The sample range `10.10.0.0/26` is only an example. Confirm it does not overlap with any existing VPC, VPN, or connected network. Do not run create commands against existing resources; inspect and reuse them.
+This creates only the network and subnet. It does not create a Cloud Router or NAT gateway. If the command reports that a resource already exists, inspect and reuse that resource rather than deleting it.
 
-## 5. Configure Cloud Router and Cloud NAT
+## 🌐 Step 3 — Configure Cloud Router and Standard Tier NAT
 
-### 5.1 Create a Cloud Router only if needed
+### 3.1 Create a Cloud Router
+
+Skip this if the router already exists in the selected region and is attached to the intended VPC.
 
 ```bash
 gcloud compute routers create "$ROUTER" \
@@ -193,11 +141,9 @@ gcloud compute routers create "$ROUTER" \
   --region="$REGION"
 ```
 
-Skip this command if the router already exists in the correct region and is attached to the intended VPC.
+### 3.2 Create Public Cloud NAT with Standard Tier IP allocation
 
-### 5.2 Create a NAT gateway only if needed
-
-First verify that no existing NAT gateway covers the Cloud Run subnet. If you need a new one, check the current Google Cloud CLI documentation and supported endpoint types for your configuration before running:
+For a new NAT gateway that covers the Cloud Run subnet:
 
 ```bash
 gcloud compute routers nats create "$NAT" \
@@ -209,9 +155,9 @@ gcloud compute routers nats create "$NAT" \
   --auto-network-tier=STANDARD
 ```
 
-This example requests automatic NAT external IP allocation at **Standard Network Service Tier** for the selected subnet. The supported configuration can depend on the endpoint types and current Google Cloud features. If the command is rejected, check the current Cloud NAT documentation rather than repeatedly creating or replacing resources.
+This example requests automatic NAT external IP allocation at **Standard Network Service Tier** for the selected subnet. Confirm the supported endpoint types and current CLI options for your networking configuration before applying it.
 
-Verify the result:
+### 3.3 Verify the NAT configuration
 
 ```bash
 gcloud compute routers nats describe "$NAT" \
@@ -223,221 +169,214 @@ gcloud compute routers get-nat-ip-info "$ROUTER" \
 ```
 
 > [!WARNING]
-> Changing NAT IP allocation or replacing an IP can interrupt active connections and affect upstream IP allowlists. Do not change a working NAT gateway without checking its current configuration and planning for reconnection.
+> If a router or NAT gateway already exists, do not rerun the create commands. Inspect its allocation mode and settings first. Changing NAT IP allocation or replacing addresses can interrupt active connections.
 
-### Do I need a static outbound IP?
+### 🔐 Do you need a fixed outbound IP?
 
-A known NAT IP is useful if a destination server allowlists your outbound IP. If you do not need a fixed IP, you may be able to simplify networking, but confirm the impact on your application first. Automatic allocation can use multiple addresses as capacity changes; verify the actual IPs rather than assuming there will be only one.
+If an upstream server uses an IP allowlist, a known NAT external IP can be useful. Automatic allocation may allocate more than one IP as capacity needs change. For a controlled address, consider reserving a static external IP at the intended network tier and configuring NAT to use it. Follow the current Cloud NAT documentation for the required allocation mode and verify the final IP allocation after configuration.
 
-## 6. Configure UUID and WebSocket path
+## 🚀 Step 4 — Connect Cloud Run to the VPC
 
-Generate a unique UUID in Cloud Shell or a Linux/Git Bash terminal with `uuidgen`:
-
-```bash
-uuidgen
-```
-
-Set the values for the deployment shell. Replace the examples with your own values:
+For an existing Cloud Run service:
 
 ```bash
-export VLESS_UUID="REPLACE_WITH_YOUR_GENERATED_UUID"
-export WS_PATH="/replace-with-a-long-random-path"
-```
-
-Keep the UUID private. For production, prefer Secret Manager over a plain environment variable. If using Secret Manager, grant the Cloud Run service identity access and map the secret to `VLESS_UUID`; do not put a real UUID into source control or a shared command history.
-
-The WebSocket path must be identical in Cloud Run and the VLESS client. If you change it, update every authorized client.
-
-## 7. Build the container image
-
-Create an Artifact Registry Docker repository only if it does not already exist:
-
-```bash
-gcloud artifacts repositories describe "$AR_REPO" \
-  --location="$REGION" >/dev/null 2>&1 || \
-gcloud artifacts repositories create "$AR_REPO" \
-  --repository-format=docker \
-  --location="$REGION" \
-  --description="Container images for self-gcp-run"
-```
-
-Build and push the image with Cloud Build:
-
-```bash
-export IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/$IMAGE_NAME:latest"
-
-gcloud builds submit --tag "$IMAGE_URI" .
-```
-
-Wait for the build to complete successfully. If a GitHub-connected Cloud Build trigger already deploys your branch, check its configuration to avoid triggering duplicate deployments.
-
-## 8. Deploy to Cloud Run
-
-The following command routes **all outbound traffic through the VPC**. Use it when you intentionally need the Cloud NAT path, for example to use a known NAT egress IP.
-
-```bash
-gcloud run deploy "$SERVICE" \
-  --image="$IMAGE_URI" \
+gcloud run services update "$SERVICE" \
   --region="$REGION" \
-  --port=8080 \
   --network="$NETWORK" \
   --subnet="$SUBNET" \
-  --vpc-egress=all-traffic \
-  --set-env-vars="XRAY_PORT=8081,VLESS_UUID=$VLESS_UUID,WS_PATH=$WS_PATH" \
-  --max=1
-```
-
-**Before deploying:** If this is an existing production service, preserve its current ingress, authentication, CPU, memory, concurrency, timeout, and scaling configuration unless you deliberately want to change them. The example above is a starting point, not a complete copy of every possible production setting.
-
-If clients need to connect directly to a public proxy endpoint, configure Cloud Run ingress and IAM intentionally. Allowing unauthenticated invocation makes the HTTPS endpoint publicly reachable; the VLESS UUID must remain secret and strong.
-
-## 9. Choose VPC egress routing
-
-This is the most important choice when balancing NAT costs and outbound IP requirements.
-
-| Cloud Run setting | What it does | Use it when |
-|---|---|---|
-| **Route all traffic to the VPC** — `all-traffic` | Public outbound traffic follows the VPC route and can use Cloud NAT. | You need a known NAT egress IP or intentionally want all outbound traffic routed through the VPC. |
-| **Route only requests to private IPs to the VPC** — `private-ranges-only` | Public internet destinations normally use Cloud Run's default egress path and bypass this VPC/NAT route. | You want to reduce NAT processing and do not require public traffic to use the NAT IP. |
-
-### Switch to private-ranges-only
-
-For an existing service, this changes the egress setting without deleting the VPC or NAT resources:
-
-```bash
-gcloud run services update "$SERVICE" \
-  --region="$REGION" \
-  --vpc-egress=private-ranges-only
-```
-
-To switch back:
-
-```bash
-gcloud run services update "$SERVICE" \
-  --region="$REGION" \
   --vpc-egress=all-traffic
 ```
 
-After changing the setting, test VLESS connectivity, outbound destinations, and any IP allowlists. Public outbound IP behavior may change.
+The important setting is:
 
-> [!NOTE]
-> `private-ranges-only` does **not** make public internet traffic free. It changes the route; data-transfer charges may still apply and may appear under different billing SKUs. Compare the total bill before and after the change.
+- `--network` and `--subnet`: select the VPC path.
+- `--vpc-egress=all-traffic`: routes public internet egress through the VPC so the configured NAT path can apply.
 
-## 10. Configure your VLESS client
+With `private-ranges-only`, ordinary public internet destinations generally do not use this VPC egress path.
 
-Use the deployed Cloud Run service URL or your configured custom domain.
+If you deploy a new revision with `gcloud run deploy`, add the same network, subnet, and egress flags to your normal command. Keep your existing image, environment variables, ingress policy, authentication, and scaling settings unless you intend to change them.
 
-| Client field | Value |
-|---|---|
-| Protocol | VLESS |
-| Server / address | Cloud Run hostname or configured custom domain |
-| Port | `443` |
-| Transport | WebSocket (`ws`) |
-| TLS / security | Enabled |
-| SNI | The hostname used by the client |
-| WebSocket Host | Usually the same hostname |
-| WebSocket path | Exactly the value of `WS_PATH` |
-| UUID | Your private `VLESS_UUID` value |
+## 🧪 Step 5 — Verify the outbound IP
 
-Cloud Run provides HTTPS/TLS at its platform edge. Do not assume a custom hostname or path works until it has been configured and tested. Never copy a sample UUID from documentation into a production client.
+1. Deploy the new Cloud Run revision and wait for it to become ready.
+2. Make an outbound request **from the application running on Cloud Run** to a trusted IP-echo endpoint, or temporarily add a protected diagnostic endpoint.
+3. Compare the observed source IP with the IP address(es) allocated to Cloud NAT.
+4. If your upstream server has an allowlist, add the correct NAT address(es) there.
 
-## 11. Verify and troubleshoot
-
-### Check the deployed service and revision
+Inspect NAT allocation again:
 
 ```bash
-gcloud run services describe "$SERVICE" \
-  --region="$REGION" \
-  --format="yaml(status.url,status.latestReadyRevisionName,spec.template.metadata.annotations,spec.template.spec.containers)"
+gcloud compute routers nats describe "$NAT" \
+  --router="$ROUTER" \
+  --region="$REGION"
+
+gcloud compute routers get-nat-ip-info "$ROUTER" \
+  --region="$REGION"
 ```
 
-### Read recent logs
+**Do not expect the `run.app` URL to resolve to the NAT IP.** Cloud NAT is used for outbound source traffic, not as the inbound address of your Cloud Run service.
 
-```bash
-gcloud run services logs read "$SERVICE" \
-  --region="$REGION" \
-  --limit=100
-```
+## 💸 Cost optimization checklist
 
-### Test both the page and the proxy
+- [ ] **Cloud Run:** Use minimum instances of zero if cold starts are acceptable; size CPU and memory based on measurements.
+- [ ] **Scaling:** Set sensible concurrency and maximum instances; too-low limits may cause 429 responses, while high limits do not guarantee capacity.
+- [ ] **Cloud NAT:** Include gateway usage, NAT data processing, and external IP charges in your estimate.
+- [ ] **Network transfer:** Standard Tier can still incur internet data transfer charges. It is not free bandwidth.
+- [ ] **Reduce data volume:** Cache repeat requests, avoid redundant downloads, and compress where appropriate.
+- [ ] **Scope NAT carefully:** Cover only the subnet ranges that require it, when appropriate.
+- [ ] **Compare tiers:** Benchmark cost, latency, throughput, and reliability for your region and client locations.
+- [ ] **Billing alerts:** Review Cloud Run, Cloud NAT, external IP, and network egress line items separately.
 
-1. Open the service URL in a browser and confirm the information page responds.
-2. Connect an authorized VLESS client with the correct UUID, TLS, hostname, and WebSocket path.
-3. Test browsing through the proxy.
-4. If using Cloud NAT, compare the observed outbound IP from inside the running service with the configured NAT IP.
-5. Check Cloud Run logs and Billing if connections fail or costs rise unexpectedly.
+For a low-traffic service, the fixed or hourly NAT costs may outweigh any network-tier savings. Calculate the total cost using current regional prices instead of assuming this architecture is always cheaper.
 
-A successful browser page does not prove that the VLESS tunnel is working. HTTP status `101` indicates a successful WebSocket upgrade. A long-lived WebSocket can carry a large amount of data under one request, so request counts alone do not measure total proxy usage.
+## 🧰 Troubleshooting
 
 <details>
 <summary><strong>❌ Outbound requests fail</strong></summary>
 
-Check that the active Cloud Run revision uses the intended network and subnet, the NAT covers the subnet if you use `all-traffic`, DNS resolves, egress firewall rules allow the destination, NAT ports are available, and the upstream server permits the connection.
+Check that the Cloud Run revision uses the intended VPC and subnet, NAT covers that subnet, routes and egress firewall rules allow the destination, DNS resolves, NAT ports are available, and the upstream firewall permits the connection.
 
 </details>
 
 <details>
-<summary><strong>🌍 The outbound IP is not the NAT IP</strong></summary>
+<summary><strong>🌍 The observed public IP is not the NAT IP</strong></summary>
 
-Confirm that the service uses `--vpc-egress=all-traffic`, the correct network/subnet, and the intended active revision. Test from inside the running Cloud Run service, not from your laptop. With `private-ranges-only`, public destinations normally do not use the NAT egress IP.
-
-</details>
-
-<details>
-<summary><strong>🔌 Connections drop after a network change</strong></summary>
-
-NAT IP replacement or routing changes can interrupt active sessions. Verify the new configuration, test client reconnection, and plan changes carefully if clients depend on a fixed IP.
+Confirm `--vpc-egress=all-traffic`, the selected network/subnet, the NAT subnet coverage, and the active Cloud Run revision. Make the IP check from inside the running service, not from your laptop.
 
 </details>
 
 <details>
-<summary><strong>🐢 Standard Tier is slower than expected</strong></summary>
+<summary><strong>🔌 Connections drop after changing NAT</strong></summary>
 
-Benchmark latency, throughput, and reliability from your actual client locations. Compare Standard and Premium Network Service Tier for your use case; choose based on total cost and performance, not tier name alone.
+Replacing NAT IPs or changing allocation settings can interrupt existing sessions. Plan a maintenance window, verify the new allocation, and test client reconnect behavior.
 
 </details>
 
-## 💸 Cost optimization
+<details>
+<summary><strong>🐢 Standard Tier is slower for your traffic</strong></summary>
 
-Use this checklist to review the largest cost drivers:
+Benchmark real requests from your target client locations. Compare latency, throughput, and reliability with Premium Tier before deciding whether the cost trade-off is worthwhile.
 
-- [ ] **Network transfer:** Review outbound data-transfer SKUs first if bandwidth is your largest charge.
-- [ ] **Cloud NAT processing:** NAT processing is separate from internet data transfer. If you do not need a NAT egress IP, test `private-ranges-only` and compare costs after billing data updates.
-- [ ] **NAT gateway and IPs:** Check gateway uptime and external IP charges. Release only addresses confirmed to be unused.
-- [ ] **Cloud Run compute:** Review CPU/memory billing, minimum instances, maximum instances, concurrency, and request timeout. Long-lived WebSocket sessions can keep instances active.
-- [ ] **Reconnect behavior:** Avoid unnecessary background reconnect loops and repeated retries.
-- [ ] **Data volume:** Monitor unusually large sessions and repeated downloads. VLESS transports data; it does not automatically compress the traffic.
-- [ ] **Network tier:** Compare current Standard and Premium Tier prices, performance, and destination-dependent transfer costs.
-- [ ] **Billing alerts:** Create budget alerts and review Cloud Run, Cloud NAT, IP, and transfer SKUs separately.
+</details>
 
-### Understand the bill
+<details>
+<summary><strong>💳 The bill is higher than expected</strong></summary>
 
-| Billing item | What it usually represents |
-|---|---|
-| Cloud NAT Data Processing | Traffic processed by Cloud NAT; charged separately from internet data transfer |
-| Cloud NAT Gateway Uptime | NAT gateway usage |
-| Cloud NAT IP Usage / Static IP | External IP allocation or usage, depending on the SKU |
-| Cloud Run Internet Data Transfer Out | Outbound transfer billed under a Cloud Run network SKU |
-| Carrier Peering / other Network Data Transfer Out | Outbound transfer billed under the specific network route and SKU |
-| Cloud Run CPU / Memory | Compute resources used by the service |
+Check Cloud Run compute, Cloud NAT gateway and data processing, external IP addresses, and network data transfer separately in Cloud Billing. Set budgets and alerts; a budget alert notifies you but does not automatically cap spending.
 
-Use [Cloud Billing Reports](https://console.cloud.google.com/billing/reports), filter to the same project and date range, and group by SKU. Compare **both cost and usage quantity (GiB)** before and after a routing change. A budget alert notifies you; it does not automatically stop spending.
+</details>
 
 ## 🔗 Official documentation
 
-| Topic | Guide |
+| Topic | Google Cloud guide |
 |---|---|
-| Direct VPC egress | [Configure Direct VPC egress](https://cloud.google.com/run/docs/configuring/vpc-direct-vpc) |
-| Cloud Run networking | [Networking best practices](https://cloud.google.com/run/docs/configuring/networking-best-practices) |
-| Cloud NAT concepts | [Cloud NAT overview](https://cloud.google.com/nat/docs/overview) |
-| Cloud NAT setup | [Set up and manage Public NAT](https://cloud.google.com/nat/docs/set-up-manage-network-address-translation) |
-| Network pricing | [VPC network pricing](https://cloud.google.com/vpc/network-pricing) |
-| Cloud Run pricing | [Cloud Run pricing](https://cloud.google.com/run/pricing) |
-| Artifact Registry | [Create Docker repositories](https://cloud.google.com/artifact-registry/docs/docker/store-docker-container-images) |
+| 🚀 Direct VPC egress | [Configure Direct VPC egress](https://cloud.google.com/run/docs/configuring/vpc-direct-vpc) |
+| 🧭 Networking | [Cloud Run networking best practices](https://cloud.google.com/run/docs/configuring/networking-best-practices) |
+| 🌐 NAT concepts | [Cloud NAT overview](https://cloud.google.com/nat/docs/overview) |
+| ⚙️ NAT setup | [Set up and manage Public NAT](https://cloud.google.com/nat/docs/set-up-manage-network-address-translation) |
+| 💸 Network pricing | [VPC network pricing](https://cloud.google.com/vpc/network-pricing) |
+| 💸 Cloud Run pricing | [Cloud Run pricing](https://cloud.google.com/run/pricing) |
 
 ---
 
 <p align="center">
-  <strong>☁️ Configure carefully · Verify egress · Protect credentials · Monitor costs</strong><br>
-  <sub>Community documentation for learning and planning. Review current Google Cloud documentation and pricing before changing production networking.</sub>
+  <strong>☁️ Configure carefully · Verify egress · Monitor your bill</strong><br/>
+  <sub>Documentation for learning and planning. Review current Google Cloud documentation and prices before changing production networking.</sub>
 </p>
+
+
+## 🖥️ Cloud Run proxy service and browser information page
+
+This repository can run an Xray **VLESS over WebSocket (WS)** inbound behind a small Go HTTP gateway. The gateway lets ordinary browser requests display a friendly information page while WebSocket upgrade requests are forwarded to Xray.
+
+### Request flow
+
+```text
+Browser opens /
+      |
+      v
+Go gateway serves the service information page
+
+VLESS client connects to configured WebSocket path
+      |
+      v
+Go gateway forwards the WebSocket request to Xray
+      |
+      v
+Xray validates the VLESS UUID and handles proxy traffic
+```
+
+The browser page and the VLESS connection are separate functions. A successful browser page load only shows that the HTTP endpoint responded; it does not prove that a VLESS client can connect or that outbound internet access is working.
+
+### Browser page and UUID verification
+
+The gateway supports a browser form that checks the submitted UUID on the server before returning the information page. Keep these points in mind:
+
+- The UUID is a credential. Do not publish a live UUID in README files, screenshots, public issue reports, or client import links.
+- Configure the production UUID through Cloud Run environment configuration or Secret Manager rather than relying on a sample/default value in source code.
+- Use HTTPS when entering credentials. Do not enter a UUID into an untrusted page.
+- The current simple verification form is not a full identity system. If the information page is sensitive, add rate limiting and short-lived authenticated sessions before exposing it publicly.
+- Browser UUID verification does **not** authenticate a VLESS connection by itself; Xray validates the UUID used by the VLESS client separately.
+
+### VLESS + WebSocket + TLS client settings
+
+For a Cloud Run HTTPS endpoint, the typical client values are:
+
+| Field | Value |
+|---|---|
+| Protocol | VLESS |
+| Server / address | The hostname of the actual Cloud Run URL or configured custom domain |
+| Port | `443` |
+| Transport | WebSocket (`ws`) |
+| TLS / security | TLS |
+| SNI | The hostname used by the client |
+| WebSocket Host header | Usually the same hostname |
+| WebSocket path | Must exactly match `WS_PATH` and Xray's `wsSettings.path` |
+| UUID | The value configured for `VLESS_UUID` |
+
+**Do not copy a sample UUID from this documentation into production.** The actual UUID must match the value configured in Cloud Run and Xray. If a UUID was ever committed publicly, rotate it and update authorized clients.
+
+Cloud Run's `run.app` URL provides HTTPS/TLS at the platform edge. Do not assume that a different hostname, custom domain, or path works until you test it with the deployed revision. Keep the WebSocket path identical on both the client and Xray.
+
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `PORT` | HTTP port that Cloud Run routes requests to; normally `8080` |
+| `XRAY_PORT` | Internal Xray listener port; the gateway and Xray must agree |
+| `VLESS_UUID` | VLESS client credential configured in Xray |
+| `WS_PATH` | WebSocket path; must match the client configuration |
+
+Set or update a service variable with Cloud Run, for example:
+
+```bash
+gcloud run services update YOUR_SERVICE \\
+  --region=YOUR_REGION \\
+  --update-env-vars=WS_PATH=/YOUR_WS_PATH
+```
+
+For a real UUID, prefer Secret Manager or another controlled secret-management method. Avoid putting secrets in shell history, source control, logs, or command examples shared with others.
+
+### Deploying source changes
+
+If your repository is connected to Cloud Build or another CI/CD pipeline, pushing to the configured branch may trigger a new image build and deployment. Check the build result and the active Cloud Run revision before testing. If no automatic trigger is configured, build and deploy using your existing pipeline; do not replace a working service URL or alter network settings unless needed.
+
+After deployment, test both paths:
+
+1. Open the service root URL in a browser and confirm the information page responds.
+2. Connect using an authorized VLESS client with the correct hostname, port, UUID, TLS, and WebSocket path.
+3. Check Cloud Run logs for startup errors, HTTP errors, and failed proxy requests.
+
+### 💸 Cost notes for the proxy and information page
+
+The HTML information page and a UUID comparison use very little compute during occasional visits. They should not materially change the bill on their own. The larger cost factors can be:
+
+- Cloud Run CPU and memory while requests are active, including long-lived WebSocket requests.
+- Repeated client reconnects, including a VPN app reconnecting in the background.
+- Outbound internet data transfer and destination-dependent transfer pricing.
+- Cloud NAT gateway usage, NAT data processing, and external IP charges when traffic uses the VPC/NAT path.
+
+Cloud Run's minimum instance setting of zero does not terminate an active request. WebSocket connections are subject to the configured request timeout; reconnecting clients can create new requests repeatedly. If you do not need the proxy overnight, disconnect clients or disable automatic reconnection rather than increasing the timeout solely to reduce cost.
+
+To investigate a bill, compare Cloud Run compute, Cloud NAT, and network data-transfer line items for the same time range. A count of HTTP `101` responses is a count of WebSocket upgrades, not a count of unique users, total connection duration, or an exact cost calculation.
+
