@@ -1,0 +1,15 @@
+services:
+  self-gcp-run:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: self-gcp-run:local
+    container_name: self-gcp-run
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+      XRAY_PORT: "8081"
+    ports:
+      - "127.0.0.1:8080:8080"
