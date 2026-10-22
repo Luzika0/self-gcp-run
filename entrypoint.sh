@@ -16,11 +16,19 @@ case "$GRPC_SERVICE_NAME" in
     ;;
 esac
 
-# UUIDs and service names are restricted above to safe characters for sed replacement.
+# Match the literal placeholders in config.template.json. Escape the dollar sign
+# so the shell does not expand the placeholder before sed sees it.
 sed \
-  -e "s|${VLESS_UUID}|$VLESS_UUID|g" \
-  -e "s|${GRPC_SERVICE_NAME}|$GRPC_SERVICE_NAME|g" \
+  -e "s|\${VLESS_UUID}|$VLESS_UUID|g" \
+  -e "s|\${GRPC_SERVICE_NAME}|$GRPC_SERVICE_NAME|g" \
   /etc/xray/config.template.json > /tmp/xray-config.json
+
+# Fail early if any template placeholder remains; otherwise Xray could start
+# with a literal "${VLESS_UUID}" instead of the configured credential.
+if grep -Fq '${VLESS_UUID}' /tmp/xray-config.json || grep -Fq '${GRPC_SERVICE_NAME}' /tmp/xray-config.json; then
+  echo "Xray configuration still contains an unreplaced template placeholder" >&2
+  exit 1
+fi
 
 /usr/local/bin/xray run -test -config /tmp/xray-config.json
 /usr/local/bin/xray run -config /tmp/xray-config.json &
