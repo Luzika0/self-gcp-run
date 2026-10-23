@@ -4,7 +4,7 @@ set -eu
 : "${PORT:=8080}"
 : "${XRAY_PORT:=${PORT}}"
 : "${VLESS_UUID:=36459fd0-0c89-4733-b20e-067ffc341bd2}"
-: "${WS_PATH:=/TG-@Not_Ragnar}"
+: "${WS_PATH:=/}"
 
 case "$XRAY_PORT" in
   *[!0-9]*|"") echo "XRAY_PORT must be a number" >&2; exit 1 ;;
