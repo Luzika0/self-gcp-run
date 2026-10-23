@@ -9,8 +9,10 @@ COPY config.template.json /etc/xray/config.template.json
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Cloud Run supplies PORT. entrypoint.sh uses it for Xray's inbound port.
+# Cloud Run supplies PORT. Keep Xray's asset path explicit after copying
+# the binary and GeoIP database out of the official distroless image.
 ENV PORT=8080
+ENV XRAY_LOCATION_ASSET=/usr/local/share/xray
 ENV VLESS_UUID=36459fd0-0c89-4733-b20e-067ffc341bd2
 ENV WS_PATH=/
 
