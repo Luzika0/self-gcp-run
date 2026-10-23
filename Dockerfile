@@ -9,8 +9,8 @@ COPY config.template.json /etc/xray/config.template.json
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Cloud Run supplies PORT. entrypoint.sh uses it for Xray's inbound port.
 ENV PORT=8080
-ENV XRAY_PORT=8080
 ENV VLESS_UUID=36459fd0-0c89-4733-b20e-067ffc341bd2
 ENV WS_PATH=/
 
