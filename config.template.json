@@ -21,7 +21,21 @@
       }
     }
   ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "ip": ["geoip:cn"],
+        "outboundTag": "block-china"
+      }
+    ]
+  },
   "outbounds": [
+    {
+      "tag": "block-china",
+      "protocol": "blackhole"
+    },
     {
       "protocol": "freedom",
       "settings": {}
