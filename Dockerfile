@@ -1,18 +1,17 @@
 FROM ghcr.io/xtls/xray-core:latest AS xray
 
-FROM alpine:3.22
-RUN apk add --no-cache ca-certificates gettext
+FROM envoyproxy/envoy:v1.35-latest
+
 COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
 # Required by the geoip:cn routing rule in config.template.json.
 COPY --from=xray /usr/local/share/xray/geoip.dat /usr/local/share/xray/geoip.dat
 COPY config.template.json /etc/xray/config.template.json
+COPY envoy.yaml /etc/envoy/envoy.yaml
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
-# Cloud Run supplies PORT. entrypoint.sh uses it for Xray's inbound port.
-ENV PORT=8080
-ENV VLESS_UUID=36459fd0-0c89-4733-b20e-067ffc341bd2
-ENV WS_PATH=/
+RUN chmod +x /entrypoint.sh \
+    && /usr/local/bin/envoy --mode validate -c /etc/envoy/envoy.yaml
 
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
+CMD []

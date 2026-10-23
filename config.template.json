@@ -1,8 +1,11 @@
 {
+  "log": {
+    "loglevel": "warning"
+  },
   "inbounds": [
     {
-      "listen": "0.0.0.0",
-      "port": ${XRAY_PORT},
+      "listen": "127.0.0.1",
+      "port": 10000,
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -14,9 +17,10 @@
         "decryption": "none"
       },
       "streamSettings": {
-        "network": "ws",
-        "wsSettings": {
-          "path": "${WS_PATH}"
+        "network": "grpc",
+        "grpcSettings": {
+          "serviceName": "${GRPC_SERVICE_NAME}",
+          "multiMode": true
         }
       }
     }
