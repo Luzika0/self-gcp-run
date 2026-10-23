@@ -1,22 +1,45 @@
 #!/bin/sh
 set -eu
 
-: "${PORT:=8080}"
-: "${XRAY_PORT:=${PORT}}"
-: "${VLESS_UUID:=36459fd0-0c89-4733-b20e-067ffc341bd2}"
-: "${WS_PATH:=/}"
-
-case "$XRAY_PORT" in
-  *[!0-9]*|"") echo "XRAY_PORT must be a number" >&2; exit 1 ;;
-esac
+: "${VLESS_UUID:?VLESS_UUID must be supplied at runtime; configure it in Cloud Run or Secret Manager}"
+: "${GRPC_SERVICE_NAME:=grpc}"
 
 case "$VLESS_UUID" in
   ????????-????-????-????-????????????) ;;
   *) echo "VLESS_UUID does not look like a UUID" >&2; exit 1 ;;
 esac
 
-export XRAY_PORT VLESS_UUID WS_PATH
-envsubst '${XRAY_PORT} ${VLESS_UUID} ${WS_PATH}' < /etc/xray/config.template.json > /tmp/config.json
+case "$GRPC_SERVICE_NAME" in
+  ""|*[!A-Za-z0-9_-]*)
+    echo "GRPC_SERVICE_NAME must contain only letters, digits, underscores, or hyphens" >&2
+    exit 1
+    ;;
+esac
 
-/usr/local/bin/xray run -test -config /tmp/config.json
-exec /usr/local/bin/xray run -config /tmp/config.json
+# Escape the template variables in the sed search patterns; replace them with runtime values.
+sed \
+  -e "s|\${VLESS_UUID}|$VLESS_UUID|g" \
+  -e "s|\${GRPC_SERVICE_NAME}|$GRPC_SERVICE_NAME|g" \
+  /etc/xray/config.template.json > /tmp/xray-config.json
+
+/usr/local/bin/xray run -test -config /tmp/xray-config.json
+/usr/local/bin/xray run -config /tmp/xray-config.json &
+XRAY_PID=$!
+
+/usr/local/bin/envoy -c /etc/envoy/envoy.yaml --log-level warning &
+ENVOY_PID=$!
+
+stop_children() {
+  kill "$XRAY_PID" "$ENVOY_PID" 2>/dev/null || true
+}
+trap stop_children TERM INT
+
+if wait "$ENVOY_PID"; then
+  STATUS=0
+else
+  STATUS=$?
+fi
+
+kill "$XRAY_PID" 2>/dev/null || true
+wait "$XRAY_PID" 2>/dev/null || true
+exit "$STATUS"
