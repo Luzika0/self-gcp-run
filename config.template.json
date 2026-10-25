@@ -18,7 +18,8 @@
         "wsSettings": {
           "path": "${WS_PATH}"
         }
-      }
+      },
+      "timeout": 30
     }
   ],
   "routing": {
