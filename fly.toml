@@ -1,7 +1,6 @@
-# fly.toml app configuration file generated for self-gcp-run on 2026-11-02T01:56:44Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# Fly.io app configuration for self-gcp-run
+# Xray VLESS over WebSocket listens on 0.0.0.0:8080.
+# Fly Proxy terminates public HTTPS and forwards WebSocket traffic here.
 
 app = 'self-gcp-run'
 primary_region = 'sin'
@@ -17,7 +16,6 @@ primary_region = 'sin'
   processes = ['app']
 
 [[vm]]
-  memory = '1gb'
+  memory = '256mb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 256
